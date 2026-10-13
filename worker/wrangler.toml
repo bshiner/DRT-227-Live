@@ -1,0 +1,8 @@
+name = "drt-227-live-api"
+main = "src/worker.js"
+compatibility_date = "2025-01-01"
+
+[vars]
+UPSTREAM_VEHICLES = "https://drtonline.durhamregiontransit.com/gtfsrealtime/VehiclePositions"
+UPSTREAM_TRIPUPDATES = "https://drtonline.durhamregiontransit.com/gtfsrealtime/TripUpdates"
+CACHE_TTL = "45"

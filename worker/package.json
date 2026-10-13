@@ -1,0 +1,9 @@
+{
+  "name": "drt-227-live-worker",
+  "private": true,
+  "type": "module",
+  "devDependencies": {
+    "gtfs-realtime-bindings": "latest",
+    "wrangler": "latest"
+  }
+}

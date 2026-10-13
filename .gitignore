@@ -1,0 +1,14 @@
+# dependencies
+node_modules/
+worker/node_modules/
+
+# wrangler
+.wrangler/
+
+# downloaded GTFS source data (regenerate with scripts/build-data.mjs)
+data-src/*.zip
+data-src/gtfs/
+
+# misc
+.DS_Store
+*.log
