@@ -1,19 +1,24 @@
-# DRT-227 Live
+# DRT Live
 
-A live bus tracker for **Durham Region Transit route 227** (the Ajax loop).
-Shows the real-time positions of all buses on route 227 on a map, auto-refreshing
-every 60 seconds, with predicted arrivals at each of the 92 stops on the loop.
+A live bus tracker for **Durham Region Transit routes 227 and 224** (the Ajax
+loop and the Ajax–Taunton corridor). Shows the real-time positions of all buses
+on both routes on a map, auto-refreshing every 60 seconds, with predicted
+arrivals at every stop on either route.
 
 ![stack](https://img.shields.io/badge/stack-Cloudflare%20Workers%20%2B%20Leaflet-006633)
 
 ## What it does
 
 - **Route polylines** — 227A (clockwise, solid green) and 227B (counter-clockwise,
-  dashed gray) rendered from baked-in GTFS shape data.
-- **Live bus markers** — every bus currently assigned to route 227, colored by
-  loop direction. Click a bus for vehicle ID, trip ID, speed, heading, and status.
-- **Stop dots with arrivals** — all 92 stops; click one for the next few predicted
-  arrival times, live from the GTFS-RT TripUpdates feed.
+  dashed light green); 224 to Taunton (solid blue) and 224 to Ajax Station
+  (dashed light blue), including branch shapes.
+- **Live bus markers** — every bus currently assigned to either route, shown as
+  a teardrop map pin colored by route with a bus glyph and a direction badge
+  (A/B for 227, T for Taunton, A for Ajax Station). Click a bus for vehicle ID,
+  trip ID, speed, heading, and status.
+- **Stop dots with arrivals** — all 164 unique stops across both routes (92 on
+  227, 79 on 224, 7 shared); click one for the next few predicted arrival times,
+  live from the GTFS-RT TripUpdates feed, color-tagged per route.
 - **Staleness indicator** — if the newest feed data is more than 3 minutes old,
   the header turns amber and bus markers dim.
 - **Mobile responsive** — usable at a bus stop; auto-refresh every 60 seconds.
@@ -38,9 +43,10 @@ every 60 seconds, with predicted arrivals at each of the 92 stops on the loop.
   last good cached response if the upstream fails. No database.
 - **Static frontend** (`app/`) — plain HTML + vanilla JS + Leaflet 1.9 with
   OpenStreetMap tiles. No framework, no build step.
-- **Baked route data** (`app/data/route-227.json`) — generated at build time from
-  the Durham Region open-data GTFS zip by `scripts/build-data.mjs`: both loop
-  polylines (961 + 954 points), all 92 stops, and a tripId → direction map.
+- **Baked route data** (`app/data/routes.json`) — generated at build time from
+  the Durham Region open-data GTFS zip by `scripts/build-data.mjs`: every
+  direction's polylines (227: 961 + 954 points; 224: main + branch shapes per
+  direction), all stops per route, and a tripId → direction map per route.
 
 ## Data sources (verified)
 
@@ -97,7 +103,10 @@ node scripts/build-data.mjs
 ```
 
 Downloads the GTFS zip to `data-src/` if missing and regenerates
-`app/data/route-227.json`. Re-run when DRT publishes a new timetable.
+`app/data/routes.json`. The routes covered are listed in the `ROUTES` array at
+the top of the script — add an entry (route id, app colors, direction labels) to
+track another route, and add its id to `ROUTE_IDS` in `worker/wrangler.toml`.
+Re-run when DRT publishes a new timetable.
 
 ## Deployment
 
@@ -138,27 +147,34 @@ upstream requests to ~1 per minute globally; Pages serves the static files.
 
 | Endpoint           | Description                                                        |
 | ------------------ | ------------------------------------------------------------------ |
-| `GET /api/vehicles`    | Route-227 bus positions: `{ok, feedTimestamp, fetchedAt, count, vehicles[]}` |
-| `GET /api/tripupdates` | Route-227 trip updates with per-stop predicted arrival times         |
+| `GET /api/vehicles`    | Bus positions for the configured routes (default 227, 224): `{ok, feedTimestamp, fetchedAt, count, vehicles[]}` — each vehicle carries its `routeId` |
+| `GET /api/tripupdates` | Trip updates with per-stop predicted arrival times for the configured routes; each tripUpdate carries its `routeId` |
 | `GET /api/health`      | Liveness probe                                                     |
 
 All endpoints are CORS-open (`*`). Timestamps are epoch **seconds**.
 `currentStatus` is a numeric enum: `0` = INCOMING_AT, `1` = STOPPED_AT,
-`2` = IN_TRANSIT_TO.
+`2` = IN_TRANSIT_TO. The routes served are set by the `ROUTE_IDS` env var
+(comma-separated) in `worker/wrangler.toml`.
 
 ## Notes & data quirks (verified against the live feed)
 
 - **The VehiclePositions feed has no `direction_id`, no speed, and no bearing.**
-  Direction is resolved client-side via the baked tripId → direction map
+  Direction is resolved client-side via the baked tripId → direction maps
   (from `trips.txt`); speed and heading are derived from consecutive position
   updates (haversine / initial bearing) and show `—` until the second sighting.
 - **Route 227 serves 92 distinct stops** (47 clockwise / 46 counter-clockwise,
-  overlapping) — not the 48 sometimes quoted.
+  overlapping) and **route 224 serves 79**; 7 stops are shared, so the map shows
+  164 unique stop dots, each tagged with the routes that serve it.
+- **Both routes' official `route_color` is 006633**, so the app assigns 224 its
+  own blue (`#1f6fb2`) to keep the two routes visually distinct; direction is
+  shown by solid vs dashed lines and by the badge letter on each bus pin.
+- **Route 224 has branch shapes** (a second shape per direction used by a
+  handful of trips) — all are rendered.
 - Durham Region's GTFS files use **non-standard column orders** in `routes.txt`,
   `trips.txt`, and `stops.txt`; `scripts/build-data.mjs` maps columns by
   verified index. Shape IDs carry timetable-version suffixes
   (`...-2026-09` / `...-2026-10`); the bake prefers the newest variant while the
-  trip map covers both, since live vehicles can still reference the older one.
+  trip maps cover both, since live vehicles can still reference the older one.
 - GTFS-RT int64 fields arrive as Long objects and are normalized to numbers in
   the Worker before JSON serialization.
 
@@ -170,12 +186,12 @@ app/                     # static frontend (deploy to Cloudflare Pages)
   app.js                 # vanilla JS + Leaflet logic
   style.css
   config.js              # <-- set the deployed Worker URL here
-  data/route-227.json    # baked GTFS (regenerate via scripts/build-data.mjs)
+  data/routes.json       # baked GTFS (regenerate via scripts/build-data.mjs)
 worker/                  # Cloudflare Worker (deploy with wrangler)
   src/worker.js
   wrangler.toml
   test-decode.mjs        # exercises the decode/filter logic against live feeds
-scripts/build-data.mjs   # GTFS zip -> app/data/route-227.json
+scripts/build-data.mjs   # GTFS zip -> app/data/routes.json
 data-src/                # downloaded GTFS zip (gitignored)
 ```
 

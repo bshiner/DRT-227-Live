@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 /**
- * scripts/build-data.mjs — bake DRT route 227 GTFS data into static JSON.
+ * scripts/build-data.mjs — bake DRT route data into static JSON for the frontend.
  *
  * Reads data-src/GTFS_Durham_TXT.zip (Durham Region Open Data GTFS feed) and
- * writes app/data/route-227.json for the static frontend. No npm dependencies;
- * runs with plain `node scripts/build-data.mjs` (Node 18+).
+ * writes app/data/routes.json covering every route in ROUTES below. No npm
+ * dependencies; runs with plain `node scripts/build-data.mjs` (Node 18+).
  *
  * NOTE: this feed uses non-standard column orders in several files — the
  * column indices below were verified against the live feed and are not the
@@ -18,9 +18,25 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const ZIP_PATH = join(ROOT, 'data-src', 'GTFS_Durham_TXT.zip');
-const OUT_PATH = join(ROOT, 'app', 'data', 'route-227.json');
+const OUT_PATH = join(ROOT, 'app', 'data', 'routes.json');
 
-const ROUTE_ID = '227';
+// Routes to bake. Official route_color is 006633 for both, so 224 gets its own
+// app hue to keep the two routes visually distinct; per-direction colors are
+// solid (direction 0) vs a lighter variant (direction 1, dashed on the map).
+const ROUTES = [
+  {
+    id: '227',
+    color: '#006633',
+    dirColors: { 0: '#006633', 1: '#4c9a77' },
+    dirLabels: { 0: '227A', 1: '227B' },
+  },
+  {
+    id: '224',
+    color: '#1f6fb2',
+    dirColors: { 0: '#1f6fb2', 1: '#7aa8d4' },
+    dirLabels: { 0: '224 to Taunton', 1: '224 to Ajax Station' },
+  },
+];
 
 // ---------- minimal zip reader (stored + deflated entries) ----------
 function readZipEntries(buf) {
@@ -73,7 +89,6 @@ function parseCsv(text) {
 
 function csvTable(entries, filename) {
   const rows = parseCsv(entries[filename].toString('utf8'));
-  const header = rows[0];
   return rows.slice(1).filter(r => r.length && r.some(f => f !== ''));
 }
 
@@ -92,116 +107,143 @@ const buf = readFileSync(ZIP_PATH);
 const entries = readZipEntries(buf);
 
 // routes.txt: route_desc,route_url,route_color,route_id,route_type,route_long_name,agency_id,route_short_name,route_text_color
-const routes = csvTable(entries, 'routes.txt');
-const route = routes.find(r => r[3] === ROUTE_ID);
-if (!route) throw new Error(`route ${ROUTE_ID} not found in routes.txt`);
-const routeColor = `#${route[2]}`;
-const agencyId = route[6];
-
-// 227A = clockwise (direction 0), 227B = counter-clockwise (direction 1)
-const DIRECTION_LABELS = { 0: '227A', 1: '227B' };
-const DIRECTION_COLORS = { 0: routeColor, 1: '#888888' };
-
+const routeRows = csvTable(entries, 'routes.txt');
 // trips.txt: trip_headsign,trip_id,direction_name,route_id,wheelchair_accessible,block_id,service_id,direction_id,shape_id
-// The live VehiclePositions feed carries tripId but NOT directionId, so we bake
-// a tripId -> direction map here; the frontend uses it to color buses by loop.
-const trips = csvTable(entries, 'trips.txt').filter(t => t[3] === ROUTE_ID);
-console.log(`trips for route ${ROUTE_ID}: ${trips.length}`);
-
-const tripMap = trips.map(t => ({
-  tripId: t[1],
-  directionId: Number(t[7]),
-  headsign: t[0],
-  label: DIRECTION_LABELS[Number(t[7])] ?? String(t[7]),
-}));
-
-// direction_id -> best shape_id (prefer the -2026-10 timetable variant)
-const dirShapes = new Map(); // directionId -> { shapeId, headsign }
-for (const t of trips) {
-  const directionId = Number(t[7]);
-  const shapeId = t[8];
-  const headsign = t[0];
-  const cur = dirShapes.get(directionId);
-  if (!cur || shapeId > cur.shapeId) { // lexicographically "-2026-10" > "-2026-09"
-    dirShapes.set(directionId, { shapeId, headsign });
-  }
-}
-console.log('direction -> shape:', JSON.stringify([...dirShapes.entries()], null, 1));
-
+const tripRows = csvTable(entries, 'trips.txt');
 // shapes.txt: shape_id,shape_pt_lat,shape_pt_lon,shape_pt_sequence,shape_dist_traveled
 const shapeRows = csvTable(entries, 'shapes.txt');
-const shapes = new Map(); // shapeId -> [{lat,lon,seq}]
-for (const s of shapeRows) {
-  const id = s[0];
-  if (!shapes.has(id)) shapes.set(id, []);
-  shapes.get(id).push({ lat: parseFloat(s[1]), lon: parseFloat(s[2]), seq: parseInt(s[3], 10) });
-}
-
-const directions = [...dirShapes.entries()]
-  .sort((a, b) => a[0] - b[0])
-  .map(([directionId, { shapeId, headsign }]) => {
-    const pts = (shapes.get(shapeId) || [])
-      .slice()
-      .sort((a, b) => a.seq - b.seq)
-      .map(p => [round6(p.lon), round6(p.lat)]);
-    if (pts.length === 0) throw new Error(`no shape points for ${shapeId}`);
-    return {
-      directionId,
-      label: DIRECTION_LABELS[directionId] ?? String(directionId),
-      headsign,
-      color: DIRECTION_COLORS[directionId] ?? '#666666',
-      shapeId,
-      geometry: { type: 'LineString', coordinates: pts },
-    };
-  });
-
 // stop_times.txt: trip_id,arrival_time,departure_time,stop_id,stop_sequence,... (standard order)
-const tripIds = new Set(trips.map(t => t[1]));
-const servedStopIds = new Set();
-for (const st of csvTable(entries, 'stop_times.txt')) {
-  if (tripIds.has(st[0])) servedStopIds.add(st[3]);
+const stopTimeRows = csvTable(entries, 'stop_times.txt');
+// stops.txt: stop_code,zone_id,parent_station,stop_timezone,stop_url,location_type,stop_lon,wheelchair_boarding,stop_lat,stop_id,stop_name,preferred,stop_desc
+const stopRows = csvTable(entries, 'stops.txt');
+
+// shape points grouped by shape_id
+const shapes = new Map();
+for (const s of shapeRows) {
+  if (!shapes.has(s[0])) shapes.set(s[0], []);
+  shapes.get(s[0]).push({ lat: parseFloat(s[1]), lon: parseFloat(s[2]), seq: parseInt(s[3], 10) });
 }
 
-// stops.txt: stop_code,zone_id,parent_station,stop_timezone,stop_url,location_type,stop_lon,wheelchair_boarding,stop_lat,stop_id,stop_name,preferred,stop_desc
-const stops = csvTable(entries, 'stops.txt')
-  .filter(s => servedStopIds.has(s[9]))
-  .map(s => ({ stopId: s[9], name: s[10], lat: round6(parseFloat(s[8])), lon: round6(parseFloat(s[6])) }))
-  .sort((a, b) => (a.stopId < b.stopId ? -1 : a.stopId > b.stopId ? 1 : 0));
+// stops by id
+const stopsById = new Map();
+for (const s of stopRows) {
+  stopsById.set(s[9], { stopId: s[9], name: s[10], lat: round6(parseFloat(s[8])), lon: round6(parseFloat(s[6])) });
+}
 
-const missing = [...servedStopIds].filter(id => !stops.some(s => s.stopId === id));
-if (missing.length) throw new Error(`stop_ids referenced but missing from stops.txt: ${missing.join(', ')}`);
+function buildRoute(spec) {
+  const route = routeRows.find(r => r[3] === spec.id);
+  if (!route) throw new Error(`route ${spec.id} not found in routes.txt`);
+
+  const trips = tripRows.filter(t => t[3] === spec.id);
+  if (!trips.length) throw new Error(`no trips for route ${spec.id}`);
+
+  // direction_id -> shape ids used (prefer the -2026-10 timetable variant per
+  // base shape; some routes have a main shape plus branch shapes per direction).
+  // The live VehiclePositions feed carries tripId but NOT directionId, so the
+  // tripId -> direction map baked here is what lets the frontend color buses.
+  const dirShapes = new Map(); // directionId -> Map(baseShapeId -> best shapeId)
+  const dirHeadsign = new Map();
+  const tripMap = [];
+  for (const t of trips) {
+    const directionId = Number(t[7]);
+    const shapeId = t[8];
+    if (!dirShapes.has(directionId)) dirShapes.set(directionId, new Map());
+    const m = dirShapes.get(directionId);
+    const base = shapeId.replace(/_Timetable_-_\d{4}-\d{2}$/, '');
+    const cur = m.get(base);
+    if (!cur || shapeId > cur) m.set(base, shapeId); // "-2026-10" > "-2026-09"
+    if (!dirHeadsign.has(directionId)) dirHeadsign.set(directionId, t[0]);
+    tripMap.push({
+      tripId: t[1],
+      directionId,
+      headsign: t[0],
+      label: spec.dirLabels[directionId] ?? String(directionId),
+    });
+  }
+
+  const directions = [...dirShapes.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([directionId, bestByBase]) => {
+      const shapeIds = [...bestByBase.values()];
+      const geometries = shapeIds.map(shapeId => {
+        const pts = (shapes.get(shapeId) || [])
+          .slice()
+          .sort((a, b) => a.seq - b.seq)
+          .map(p => [round6(p.lon), round6(p.lat)]);
+        if (pts.length === 0) throw new Error(`no shape points for ${shapeId}`);
+        return { type: 'LineString', coordinates: pts };
+      });
+      return {
+        directionId,
+        label: spec.dirLabels[directionId] ?? String(directionId),
+        headsign: dirHeadsign.get(directionId),
+        color: spec.dirColors[directionId] ?? spec.color,
+        shapeIds,
+        geometries,
+      };
+    });
+
+  // stops served by this route (distinct stop_ids across ALL its trips)
+  const tripIds = new Set(trips.map(t => t[1]));
+  const servedStopIds = new Set();
+  for (const st of stopTimeRows) {
+    if (tripIds.has(st[0])) servedStopIds.add(st[3]);
+  }
+  const missing = [...servedStopIds].filter(id => !stopsById.has(id));
+  if (missing.length) throw new Error(`stop_ids referenced but missing from stops.txt: ${missing.join(', ')}`);
+  const stops = [...servedStopIds]
+    .map(id => stopsById.get(id))
+    .sort((a, b) => (a.stopId < b.stopId ? -1 : a.stopId > b.stopId ? 1 : 0));
+
+  return {
+    id: spec.id,
+    name: `Route ${spec.id}`,
+    color: route[2],
+    colorHex: spec.color,
+    agency: route[6],
+    directions,
+    stops,
+    trips: tripMap,
+  };
+}
+
+const routes = ROUTES.map(buildRoute);
 
 const out = {
-  route: { id: ROUTE_ID, name: `Route ${ROUTE_ID}`, color: routeColor.replace('#', ''), agency: agencyId },
   generatedFrom: 'GTFS_Durham_TXT.zip',
-  trips: tripMap,
-  directions,
-  stops,
+  routeIds: routes.map(r => r.id),
+  routes,
 };
 
 mkdirSync(dirname(OUT_PATH), { recursive: true });
 writeFileSync(OUT_PATH, JSON.stringify(out, null, 1));
 
 // ---------- verification ----------
-console.log(`\nwrote ${OUT_PATH}`);
-console.log(`directions: ${out.directions.length}`);
-for (const d of out.directions) {
-  console.log(`  ${d.label} (dir ${d.directionId}) shape=${d.shapeId} points=${d.geometry.coordinates.length}`);
+console.log(`wrote ${OUT_PATH}`);
+for (const r of routes) {
+  console.log(`\nroute ${r.id} (${r.name}, color ${r.color}):`);
+  for (const d of r.directions) {
+    const pts = d.geometries.map(g => g.coordinates.length).join('+');
+    console.log(`  ${d.label} (dir ${d.directionId}) shapes=${d.shapeIds.length} points=${pts} headsign="${d.headsign}"`);
+  }
+  console.log(`  stops: ${r.stops.length} | trips: ${r.trips.length}`);
 }
-console.log(`stops: ${out.stops.length}`);
-console.log(`trips: ${out.trips.length}`);
-const s3068 = out.stops.find(s => s.stopId === '3068');
-console.log(`stop 3068: ${s3068 ? `${s3068.name} @ ${s3068.lat}, ${s3068.lon}` : 'MISSING'}`);
-if (out.directions.length !== 2) throw new Error('expected exactly 2 directions');
-for (const d of out.directions) {
-  if (d.geometry.coordinates.length < 50) throw new Error(`${d.label}: too few shape points`);
+
+const r227 = routes.find(r => r.id === '227');
+if (!r227 || r227.directions.length !== 2) throw new Error('route 227: expected 2 directions');
+for (const d of r227.directions) {
+  if (d.geometries[0].coordinates.length < 50) throw new Error(`227 ${d.label}: too few shape points`);
 }
+const s3068 = r227.stops.find(s => s.stopId === '3068');
 if (!s3068 || !s3068.name.includes('Range Line Eastbound @ Poplar')) {
   throw new Error('stop 3068 sanity check failed');
 }
 if (Math.abs(s3068.lat - 43.828856) > 0.001 || Math.abs(s3068.lon - -78.99938) > 0.001) {
   throw new Error('stop 3068 coordinates off');
 }
+const r224 = routes.find(r => r.id === '224');
+if (!r224 || r224.directions.length !== 2) throw new Error('route 224: expected 2 directions');
+if (r224.stops.length < 50) throw new Error('route 224: unexpected stop count');
 console.log('\nALL CHECKS PASSED');
 
 function round6(n) { return Math.round(n * 1e6) / 1e6; }

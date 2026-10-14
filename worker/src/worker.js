@@ -3,11 +3,18 @@
 import GtfsRealtimeBindings from 'gtfs-realtime-bindings';
 const FeedMessage = GtfsRealtimeBindings.transit_realtime.FeedMessage;
 
+// Routes to include, e.g. "227,224" (env ROUTE_IDS; default matches the app).
+function parseRouteIds(env) {
+  const raw = (env && env.ROUTE_IDS) || '227,224';
+  return new Set(String(raw).split(',').map(s => s.trim()).filter(Boolean));
+}
+
 function toNum(v) {
   return (v && typeof v === 'object' && 'toNumber' in v) ? v.toNumber() : Number(v);
 }
 
-export function shapeVehicles(feedMessage) {
+export function shapeVehicles(feedMessage, routeIds) {
+  const ids = routeIds || new Set(['227']);
   const feedTimestamp = toNum(feedMessage?.header?.timestamp) || null;
   const fetchedAt = Math.round(Date.now() / 1000);
   const vehicles = [];
@@ -15,12 +22,12 @@ export function shapeVehicles(feedMessage) {
     const v = entity?.vehicle;
     if (!v) continue;
     const routeId = v?.trip?.routeId;
-    if (routeId !== '227') continue;
+    if (!ids.has(routeId)) continue;
     vehicles.push({
+      routeId: routeId,
       vehicleId: v?.vehicle?.id,
       tripId: v?.trip?.tripId,
       startDate: v?.trip?.startDate,
-      routeId: routeId,
       latitude: v?.position?.latitude,
       longitude: v?.position?.longitude,
       currentStopSequence: v?.currentStopSequence,
@@ -32,7 +39,8 @@ export function shapeVehicles(feedMessage) {
   return { ok: true, feedTimestamp, fetchedAt, count: vehicles.length, vehicles };
 }
 
-export function shapeTripUpdates(feedMessage) {
+export function shapeTripUpdates(feedMessage, routeIds) {
+  const ids = routeIds || new Set(['227']);
   const feedTimestamp = toNum(feedMessage?.header?.timestamp) || null;
   const fetchedAt = Math.round(Date.now() / 1000);
   const tripUpdates = [];
@@ -40,7 +48,7 @@ export function shapeTripUpdates(feedMessage) {
     const tu = entity?.tripUpdate;
     if (!tu) continue;
     const routeId = tu?.trip?.routeId;
-    if (routeId !== '227') continue;
+    if (!ids.has(routeId)) continue;
     const stopTimeUpdates = [];
     for (const stu of (tu?.stopTimeUpdate || [])) {
       stopTimeUpdates.push({
@@ -52,9 +60,9 @@ export function shapeTripUpdates(feedMessage) {
       });
     }
     tripUpdates.push({
+      routeId: routeId,
       tripId: tu?.trip?.tripId,
       startDate: tu?.trip?.startDate,
-      routeId: routeId,
       stopTimeUpdates,
     });
   }
@@ -121,12 +129,13 @@ export default {
     }
 
     const ttl = Number(env?.CACHE_TTL || 45);
+    const routeIds = parseRouteIds(env);
 
     try {
       if (path === '/api/vehicles') {
         const data = await fetchAndShape(
           env.UPSTREAM_VEHICLES,
-          shapeVehicles,
+          (feed) => shapeVehicles(feed, routeIds),
           'vehicles',
           ttl
         );
@@ -135,7 +144,7 @@ export default {
       if (path === '/api/tripupdates') {
         const data = await fetchAndShape(
           env.UPSTREAM_TRIPUPDATES,
-          shapeTripUpdates,
+          (feed) => shapeTripUpdates(feed, routeIds),
           'tripupdates',
           ttl
         );

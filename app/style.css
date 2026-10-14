@@ -63,12 +63,14 @@ html, body {
   gap: 14px;
   font-size: 0.80rem;
   color: #bbb;
+  flex-wrap: wrap;
 }
 
 .legend-item {
   display: flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
 }
 
 .legend-swatch {
@@ -78,16 +80,30 @@ html, body {
   border-radius: 2px;
   background: #555;
 }
-.legend-solid.green  { background: #006633; }
-.legend-dash.gray   { background: #888888; }
+.legend-solid.green      { background: #006633; }
+.legend-dash.green-light { background: repeating-linear-gradient(90deg, #4c9a77 0 5px, transparent 5px 8px); }
+.legend-solid.blue       { background: #1f6fb2; }
+.legend-dash.blue-light  { background: repeating-linear-gradient(90deg, #7aa8d4 0 5px, transparent 5px 8px); }
 
-.legend-dot {
+/* mini bus-pin glyph in the legend */
+.legend-pin {
   display: inline-block;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
+  width: 12px;
+  height: 16px;
   background: #006633;
   border: 1.5px solid #fff;
+  border-radius: 50% 50% 50% 50% / 60% 60% 40% 40%;
+  position: relative;
+}
+.legend-pin::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: -5px;
+  transform: translateX(-50%);
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+  border-top: 7px solid #006633;
 }
 
 /* ===== Status / last-updated ===== */
@@ -120,9 +136,38 @@ html, body {
   color: #888;
 }
 
+/* ===== Bus pin markers ===== */
+.bus-pin {
+  background: none;
+  border: none;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.45));
+  cursor: pointer;
+}
+.bus-pin svg { display: block; }
+
 /* ===== Staleness — dim buses ===== */
-body.stale .bus-marker {
+body.stale .bus-pin {
   opacity: 0.35 !important;
+}
+
+/* ===== Popup extras ===== */
+.route-chip {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.68rem;
+  font-weight: 700;
+  color: #fff;
+  vertical-align: middle;
+  line-height: 1.5;
+}
+
+.stop-popup ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
+}
+.stop-popup li {
+  margin: 2px 0;
 }
 
 /* ===== Mobile ===== */
