@@ -27,7 +27,9 @@
 
   var VEH_ERR = false;                 // vehicles fetch error (primary)
   var TU_ERR = false;                  // tripupdates fetch error
-  var POLL_MS = 60000;
+  var POLL_MS = 10000;                  // poll cadence — keep in sync with the
+                                        // Worker's CACHE_TTL so each poll sees
+                                        // fresh upstream data (10s)
   var UNKNOWN_COLOR = '#e67e22';
 
   var STATUS_TEXT = { 0: 'INCOMING_AT', 1: 'STOPPED_AT', 2: 'IN_TRANSIT_TO' };

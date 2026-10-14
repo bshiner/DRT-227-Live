@@ -5,5 +5,5 @@ compatibility_date = "2025-01-01"
 [vars]
 UPSTREAM_VEHICLES = "https://drtonline.durhamregiontransit.com/gtfsrealtime/VehiclePositions"
 UPSTREAM_TRIPUPDATES = "https://drtonline.durhamregiontransit.com/gtfsrealtime/TripUpdates"
-CACHE_TTL = "45"
+CACHE_TTL = "10"
 ROUTE_IDS = "227,224"

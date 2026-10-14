@@ -21,7 +21,7 @@ arrivals at every stop on either route.
   live from the GTFS-RT TripUpdates feed, color-tagged per route.
 - **Staleness indicator** — if the newest feed data is more than 3 minutes old,
   the header turns amber and bus markers dim.
-- **Mobile responsive** — usable at a bus stop; auto-refresh every 60 seconds.
+- **Mobile responsive** — usable at a bus stop; auto-refresh every 10 seconds.
 
 ## Architecture
 
@@ -37,12 +37,15 @@ arrivals at every stop on either route.
 ```
 
 - **Cloudflare Worker** (`worker/`) — stateless proxy. Fetches the DRT GTFS-RT
-  protobuf feeds, decodes them with `gtfs-realtime-bindings`, filters to route 227,
-  and returns clean JSON with `Access-Control-Allow-Origin: *`. Caches the upstream
-  response for 45 s in-memory so all visitors share one upstream fetch. Serves the
+  protobuf feeds, decodes them with `gtfs-realtime-bindings`, filters to the
+  configured routes (227 + 224 by default), and returns clean JSON with
+  `Access-Control-Allow-Origin: *`. Caches the upstream response for 10 s
+  in-memory so all visitors share one upstream fetch. Serves the
   last good cached response if the upstream fails. No database.
 - **Static frontend** (`app/`) — plain HTML + vanilla JS + Leaflet 1.9 with
-  OpenStreetMap tiles. No framework, no build step.
+  OpenStreetMap tiles. No framework, no build step. Polls the Worker every
+  10 s (`POLL_MS` in `app/app.js` — keep it in sync with the Worker's
+  `CACHE_TTL` so every poll sees fresh data).
 - **Baked route data** (`app/data/routes.json`) — generated at build time from
   the Durham Region open-data GTFS zip by `scripts/build-data.mjs`: every
   direction's polylines (227: 961 + 954 points; 224: main + branch shapes per
